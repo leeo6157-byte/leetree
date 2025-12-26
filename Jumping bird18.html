@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Flappy English Pixel - 增强画质版</title>
+    <style>
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body { margin: 0; background: #000; overflow: hidden; touch-action: none; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: 'Arial', sans-serif; }
+        #game-container { position: relative; width: 100vw; height: 100vh; background: #4ec0ca; overflow: hidden; }
+        canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+        
+        #flash { position: absolute; top:0; left:0; width:100%; height:100%; background: white; opacity: 0; pointer-events: none; z-index: 20; }
+        .flash-active { animation: flashAnim 0.1s; }
+        @keyframes flashAnim { 0% { opacity: 0.8; } 100% { opacity: 0; } }
+
+        #word-hint { position: absolute; top: 4%; width: 100%; text-align: center; z-index: 15; pointer-events: none; }
+        #english-prompt { color: #fff; font-size: 2.2rem; font-weight: bold; text-shadow: 3px 3px #543847; background: rgba(0,0,0,0.3); padding: 5px 35px; border-radius: 40px; border: 3px solid #f7bd00; }
+
+        #hud { position: absolute; top: 13%; width: 100%; text-align: center; color: white; font-size: 1.5rem; font-weight: bold; text-shadow: 2px 2px #543847; z-index: 5; }
+        
+        .menu { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; z-index: 30; width: 90%; background: rgba(255,255,255,0.95); padding: 20px; border-radius: 15px; border: 5px solid #543847; max-height: 85vh; overflow-y: auto; }
+        .menu h2 { margin: 0 0 15px 0; color: #e86101; }
+        .list-container { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+        .btn-list { background: #4ec0ca; color: white; border: 3px solid #543847; padding: 10px; border-radius: 8px; cursor: pointer; font-size: 1rem; width: 100px; font-weight: bold; }
+        
+        /* 预览界面样式 */
+        .preview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 10px; margin-bottom: 20px; }
+        .word-card { background: #fff; border: 2px solid #ddd; padding: 10px; border-radius: 8px; cursor: pointer; transition: scale 0.1s; }
+        .word-card:active { scale: 0.9; background: #f0f0f0; }
+        .word-card .icon { font-size: 1.5rem; }
+        .word-card .label { font-size: 0.8rem; display: block; color: #333; }
+        .btn-ready { background: #73bf2e; color: white; border: 3px solid #543847; padding: 12px 40px; border-radius: 30px; font-size: 1.2rem; cursor: pointer; font-weight: bold; margin-top: 10px; }
+
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="flash"></div>
+    <div id="word-hint" class="hidden"><span id="english-prompt">-</span></div>
+    <canvas id="gameCanvas"></canvas>
+    <div id="hud" class="hidden">进度: 0/10</div>
+    
+    <div id="start-menu" class="menu">
+        <h2>请选择单词表</h2>
+        <div class="list-container" id="list-btns"></div>
+    </div>
+
+    <div id="preview-menu" class="menu hidden">
+        <h2 id="preview-title">学习预览</h2>
+        <p>点击图标可练习发音</p>
+        <div class="preview-grid" id="preview-grid"></div>
+        <button class="btn-ready" onclick="finalStart()">我准备好了！</button>
+    </div>
+</div>
+
+<script>
+    const levels = [
+        { name: "水果", color: "#FF5555", words: [{en:"Apple", icon:"🍎"}, {en:"Banana", icon:"🍌"}, {en:"Orange", icon:"🍊"}, {en:"Grape", icon:"🍇"}, {en:"Pear", icon:"🍐"}, {en:"Cherry", icon:"🍒"}, {en:"Watermelon", icon:"🍉"}]},
+        { name: "动物", color: "#FFAA00", words: [{en:"Cat", icon:"🐱"}, {en:"Dog", icon:"🐶"}, {en:"Bird", icon:"🐦"}, {en:"Lion", icon:"🦁"}, {en:"Rabbit", icon:"🐰"}, {en:"Elephant", icon:"🐘"}, {en:"Pig", icon:"🐷"}]},
+        { name: "天气", color: "#55AAFF", words: [{en:"Sun", icon:"☀️"}, {en:"Cloud", icon:"☁️"}, {en:"Rain", icon:"🌧️"}, {en:"Snow", icon:"❄️"}, {en:"Wind", icon:"🌬️"}, {en:"Moon", icon:"🌙"}, {en:"Star", icon:"⭐"}]},
+        { name: "运动", color: "#55FF55", words: [{en:"Soccer", icon:"⚽"}, {en:"Basketball", icon:"🏀"}, {en:"Tennis", icon:"🎾"}, {en:"Bike", icon:"🚲"}, {en:"Swim", icon:"🏊"}, {en:"Run", icon:"🏃"}, {en:"Skate", icon:"⛸️"}]}
+    ];
+
+    let audioCtx, state = 'START', score = 0, frame = 0, pipes = [], bgX = 0, particles = [];
+    let currentLevelIndex = 0, wordOrderIndex = 0, targetScore = 10;
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const promptSpan = document.getElementById('english-prompt');
+    const bird = { x: 0, y: 0, v: 0, g: 0.25, lift: -5, rot: 0 };
+    let config = { speed: 2.5, gap: 260, pipeFreq: 110 };
+
+    // 初始化云朵数据
+    let clouds = [
+        {x: 100, y: 150, s: 0.4}, {x: 400, y: 100, s: 0.6}, {x: 700, y: 180, s: 0.5}
+    ];
+
+    // 生成列表按钮
+    const btnContainer = document.getElementById('list-btns');
+    levels.forEach((l, idx) => {
+        const btn = document.createElement('button');
+        btn.className = 'btn-list'; btn.innerText = l.name;
+        btn.onclick = () => showPreview(idx);
+        btnContainer.appendChild(btn);
+    });
+
+    function speak(text) {
+        window.speechSynthesis.cancel();
+        const msg = new SpeechSynthesisUtterance(text);
+        msg.lang = 'en-US'; msg.rate = 0.8;
+        window.speechSynthesis.speak(msg);
+    }
+
+    function showPreview(idx) {
+        currentLevelIndex = idx;
+        const level = levels[idx];
+        document.getElementById('start-menu').classList.add('hidden');
+        const previewMenu = document.getElementById('preview-menu');
+        previewMenu.classList.remove('hidden');
+        document.getElementById('preview-title').innerText = `学习：${level.name}`;
+        
+        const grid = document.getElementById('preview-grid');
+        grid.innerHTML = '';
+        level.words.forEach(w => {
+            const card = document.createElement('div');
+            card.className = 'word-card';
+            card.innerHTML = `<span class="icon">${w.icon}</span><span class="label">${w.en}</span>`;
+            card.onclick = () => speak(w.en);
+            grid.appendChild(card);
+        });
+    }
+
+    function finalStart() {
+        document.getElementById('preview-menu').classList.add('hidden');
+        startGame(currentLevelIndex);
+    }
+
+    function playSound(type) {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        if (type === 'score') {
+            osc.type = 'square'; osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+            osc.start(); osc.stop(audioCtx.currentTime + 0.2);
+        } else if (type === 'hit') {
+            osc.type = 'sawtooth'; osc.frequency.setValueAtTime(100, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            osc.start(); osc.stop(audioCtx.currentTime + 0.3);
+        }
+    }
+
+    function createExplosion(x, y, color) {
+        for (let i = 0; i < 20; i++) {
+            particles.push({
+                x: x, y: y,
+                vx: (Math.random() - 0.5) * 10,
+                vy: (Math.random() - 0.5) * 10,
+                life: 1.0,
+                color: color || '#f7bd00'
+            });
+        }
+    }
+
+    // --- 绘制像素云朵 ---
+    function drawPixelCloud(x, y, scale) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.scale(scale, scale);
+        ctx.fillStyle = "white";
+        // 简单的像素方块组合成云朵形状
+        const blocks = [[0,0,60,40], [-20,10,40,30], [40,10,40,30], [10,-15,40,30]];
+        blocks.forEach(b => {
+            ctx.fillRect(b[0], b[1], b[2], b[3]);
+            ctx.strokeStyle = "rgba(0,0,0,0.05)";
+            ctx.strokeRect(b[0], b[1], b[2], b[3]);
+        });
+        ctx.restore();
+    }
+
+    function drawBird() {
+        ctx.save(); ctx.translate(bird.x, bird.y); ctx.rotate(bird.rot);
+        ctx.fillStyle = "#f7bd00"; ctx.fillRect(-17, -12, 34, 24);
+        ctx.strokeStyle = "#000"; ctx.lineWidth = 2; ctx.strokeRect(-17, -12, 34, 24);
+        ctx.fillStyle = "white"; ctx.fillRect(6, -8, 10, 10); ctx.strokeRect(6, -8, 10, 10);
+        ctx.fillStyle = "black"; ctx.fillRect(11, -5, 3, 3);
+        ctx.fillStyle = "#f75100"; ctx.fillRect(16, 2, 12, 8); ctx.strokeRect(16, 2, 12, 8);
+        ctx.restore();
+    }
+
+    // --- 绘制立体水管 ---
+    function drawPipe(p) {
+        const pipeW = 80;
+        const drawSection = (x, y, w, h, isCap) => {
+            // 水管渐变（模拟圆柱立体感）
+            let grad = ctx.createLinearGradient(x, y, x + w, y);
+            grad.addColorStop(0, '#538a22');   // 左侧阴影
+            grad.addColorStop(0.3, '#73bf2e'); // 主色
+            grad.addColorStop(0.5, '#a4e666'); // 高光点
+            grad.addColorStop(0.8, '#73bf2e'); // 主色
+            grad.addColorStop(1, '#3a6118');   // 右侧深影
+            
+            ctx.fillStyle = grad;
+            ctx.fillRect(x, y, w, h);
+            ctx.strokeStyle = "#2d4d12";
+            ctx.lineWidth = 3;
+            ctx.strokeRect(x, y, w, h);
+        };
+
+        // 上半部水管
+        drawSection(p.x, -10, pipeW, p.top + 10); 
+        drawSection(p.x - 5, p.top - 30, pipeW + 10, 30); // 管口
+
+        // 下半部水管
+        const bY = p.top + config.gap;
+        drawSection(p.x, bY, pipeW, canvas.height - bY + 10);
+        drawSection(p.x - 5, bY, pipeW + 10, 30); // 管口
+
+        ctx.font = "45px Arial"; ctx.textAlign = "center";
+        if (!p.upExploded) {
+            ctx.save();
+            if (p.wrongFlashUp > 0) { ctx.shadowBlur = 15; ctx.shadowColor = "red"; ctx.fillStyle = "red"; p.wrongFlashUp--; }
+            ctx.fillText(p.iconUp, p.x + 40, p.top + (config.gap * 0.3));
+            ctx.restore();
+        }
+        if (!p.downExploded) {
+            ctx.save();
+            if (p.wrongFlashDown > 0) { ctx.shadowBlur = 15; ctx.shadowColor = "red"; ctx.fillStyle = "red"; p.wrongFlashDown--; }
+            ctx.fillText(p.iconDown, p.x + 40, p.top + (config.gap * 0.8));
+            ctx.restore();
+        }
+    }
+
+    function generateOrderedPipe() {
+        const level = levels[currentLevelIndex];
+        const correct = level.words[wordOrderIndex % level.words.length];
+        wordOrderIndex++;
+        let wrong = level.words[Math.floor(Math.random() * level.words.length)];
+        while(wrong.en === correct.en) wrong = level.words[Math.floor(Math.random() * level.words.length)];
+        const isUp = Math.random() > 0.5;
+        promptSpan.innerText = correct.en;
+        speak(correct.en);
+
+        pipes.push({
+            x: canvas.width, top: Math.random() * (canvas.height - config.gap - 280) + 120,
+            scored: false, correctIsUp: isUp,
+            iconUp: isUp ? correct.icon : wrong.icon,
+            iconDown: isUp ? wrong.icon : correct.icon,
+            upExploded: false, downExploded: false,
+            wrongFlashUp: 0, wrongFlashDown: 0
+        });
+    }
+
+    function loop() {
+        ctx.fillStyle = "#4ec0ca"; ctx.fillRect(0,0, canvas.width, canvas.height);
+        
+        // 绘制背景云
+        clouds.forEach(c => {
+            c.x -= 0.5;
+            if(c.x < -150) c.x = canvas.width + 50;
+            drawPixelCloud(c.x, c.y, c.s);
+        });
+
+        if (state === 'PLAY' || state === 'DIE') {
+            bird.v += bird.g; bird.y += bird.v;
+            bird.rot = Math.min(Math.PI/2, Math.max(-Math.PI/4, bird.v * 0.1));
+        }
+
+        if (state === 'PLAY') {
+            if (frame % config.pipeFreq === 0) generateOrderedPipe();
+            for (let i = pipes.length - 1; i >= 0; i--) {
+                let p = pipes[i]; p.x -= config.speed;
+                drawPipe(p);
+                if (bird.x + 15 > p.x && bird.x - 15 < p.x + 80) {
+                    if (!(bird.y > p.top && bird.y < p.top + config.gap)) die();
+                    if (!p.scored && p.x + 40 < bird.x) {
+                        const isBirdUp = bird.y < p.top + config.gap/2;
+                        if ((p.correctIsUp && isBirdUp) || (!p.correctIsUp && !isBirdUp)) {
+                            p.scored = true; score++; playSound('score');
+                            if (isBirdUp) { p.upExploded = true; createExplosion(p.x+40, p.top+(config.gap*0.3)); }
+                            else { p.downExploded = true; createExplosion(p.x+40, p.top+(config.gap*0.8)); }
+                            if (score >= targetScore) { score = 0; currentLevelIndex = (currentLevelIndex + 1) % levels.length; wordOrderIndex = 0; }
+                            document.getElementById('hud').innerText = `${levels[currentLevelIndex].name} 进度: ${score}/${targetScore}`;
+                        } else {
+                            if (isBirdUp) p.wrongFlashUp = 20; else p.wrongFlashDown = 20;
+                        }
+                    }
+                }
+                if (p.x < -100) pipes.splice(i, 1);
+            }
+            if (bird.y > canvas.height - 75 || bird.y < 0) die();
+        }
+
+        for (let i = particles.length - 1; i >= 0; i--) {
+            let prt = particles[i];
+            prt.x += prt.vx; prt.y += prt.vy; prt.life -= 0.02;
+            ctx.fillStyle = prt.color; ctx.globalAlpha = prt.life;
+            ctx.fillRect(prt.x, prt.y, 4, 4); ctx.globalAlpha = 1.0;
+            if (prt.life <= 0) particles.splice(i, 1);
+        }
+
+        ctx.fillStyle = "#ded895"; ctx.fillRect(0, canvas.height-70, canvas.width, 70);
+        ctx.fillStyle = "#9ce659"; ctx.fillRect(0, canvas.height-75, canvas.width, 5);
+        drawBird();
+        frame++;
+        requestAnimationFrame(loop);
+    }
+
+    function startGame(listIdx) {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        currentLevelIndex = listIdx; state = 'PLAY'; score = 0; pipes = []; wordOrderIndex = 0; particles = [];
+        bird.v = 0; bird.y = canvas.height/2;
+        document.getElementById('word-hint').classList.remove('hidden');
+        document.getElementById('hud').classList.remove('hidden');
+        document.getElementById('hud').innerText = `${levels[currentLevelIndex].name} 进度: 0/${targetScore}`;
+    }
+
+    function die() {
+        if(state === 'DIE') return;
+        state = 'DIE'; playSound('hit');
+        document.getElementById('flash').classList.add('flash-active');
+        setTimeout(() => {
+            document.getElementById('flash').classList.remove('flash-active');
+            document.getElementById('start-menu').classList.remove('hidden');
+            document.getElementById('word-hint').classList.add('hidden');
+            document.getElementById('hud').classList.add('hidden');
+        }, 1200);
+    }
+
+    window.onmousedown = window.ontouchstart = (e) => {
+        if (state === 'PLAY') { bird.v = bird.lift; e.preventDefault(); }
+    };
+
+    function resize() { 
+        canvas.width = window.innerWidth; canvas.height = window.innerHeight; 
+        bird.x = canvas.width * 0.25; 
+    }
+    window.onresize = resize; resize(); loop();
+</script>
+</body>
+</html>
