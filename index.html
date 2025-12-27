@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>诗歌闯关 - Pirate Story</title>
+    <style>
+        :root { --primary: #4CAF50; --secondary: #2196F3; --accent: #FF9800; --bg: #f4f7f6; }
+        body { font-family: 'PingFang SC', sans-serif; background: var(--bg); margin: 0; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+        
+        .screen { display: none; width: 100%; max-width: 600px; padding: 20px; box-sizing: border-box; text-align: center; }
+        .active { display: block; }
+
+        .preview-item { background: white; padding: 15px; margin: 10px 0; border-radius: 10px; text-align: left; border: 1px solid #eee; }
+        .preview-en { color: var(--secondary); font-weight: bold; cursor: pointer; margin-bottom: 5px; }
+        .preview-zh { color: #666; cursor: pointer; }
+
+        #timer-container { width: 100%; height: 8px; background: #eee; position: fixed; top: 0; left: 0; z-index: 1000; display: none; }
+        #timer-bar { height: 100%; width: 100%; background: var(--primary); transition: width 0.1s linear; }
+
+        .difficulty-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 15px 0; width: 100%; }
+        .diff-btn { background: white; color: #555; border: 1px solid #ccc; font-size: 0.9rem; padding: 12px 0; border-radius: 25px; font-weight: bold; cursor: pointer; width: 100%; }
+        .diff-btn.active { background: var(--secondary); color: white; border-color: var(--secondary); }
+
+        .card { background: white; border: 2px solid #ddd; border-radius: 8px; padding: 12px; margin: 5px; cursor: pointer; display: inline-block; transition: 0.2s; user-select: none; }
+        .card.selected { border-color: var(--secondary); background: #e3f2fd; }
+        .card.hidden { opacity: 0; pointer-events: none; }
+        .card.correct-placed { background: #e8f5e9; border-color: var(--primary); color: #2e7d32; font-weight: bold; }
+        
+        .match-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px; }
+        .drop-zone { min-height: 60px; border-bottom: 2px dashed #ccc; display: flex; flex-wrap: wrap; gap: 5px; padding: 10px; margin-bottom: 15px; }
+        .word-pool { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+        
+        button.action-btn { padding: 12px 20px; border: none; border-radius: 25px; background: var(--secondary); color: white; font-weight: bold; cursor: pointer; margin: 5px; }
+        .rank-box { background: #fff; padding: 10px; border-radius: 8px; margin-top: 15px; text-align: left; font-size: 0.85rem; border: 1px solid #eee; }
+    </style>
+</head>
+<body>
+
+<div id="timer-container"><div id="timer-bar"></div></div>
+
+<div id="menu-screen" class="screen active">
+    <h1>🏴‍☠️ Pirate Story</h1>
+    <p>1. 选择小节 (点击预习诗句)</p>
+    <div id="group-btns"></div>
+    <p style="margin-top:20px">2. 选择难度 (挑战排行榜)</p>
+    <div class="difficulty-btns">
+        <button class="diff-btn" id="d1" onclick="selectDiff(1)">悠闲 (无计时)</button>
+        <button class="diff-btn" id="d2" onclick="selectDiff(2)">进阶 (基础)</button>
+        <button class="diff-btn" id="d3" onclick="selectDiff(3)">高级 (挑战)</button>
+        <button class="diff-btn" id="d4" onclick="selectDiff(4)">狂暴 (极速)</button>
+    </div>
+    <div id="rank-display" class="rank-box"></div>
+</div>
+
+<div id="preview-screen" class="screen">
+    <h2 id="preview-title" style="color:var(--secondary)"></h2>
+    <p style="font-size: 0.9rem; color: #888;">点英文读英文，点中文读中文</p>
+    <div id="preview-list"></div>
+    <button class="action-btn" style="background:var(--primary); width:100%; margin-top:20px;" onclick="startChallenge()">准备好了，开始探险！</button>
+    <button class="action-btn" style="background:#999" onclick="goHome()">返回主页</button>
+</div>
+
+<div id="game-screen" class="screen">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <button class="action-btn" onclick="prevLevel()" style="background:#607d8b; padding:8px 12px; font-size:0.8rem;">◀ 上一句</button>
+        <span id="info-display" style="font-weight:bold; font-size:0.9rem;"></span>
+        <button class="action-btn" onclick="nextLevel(true)" style="background:#607d8b; padding:8px 12px; font-size:0.8rem;">下一句 ▶</button>
+    </div>
+    <div id="mode-display" style="color:var(--secondary); font-weight:bold; margin-bottom:10px;"></div>
+    <div class="controls" style="margin-bottom:15px;">
+        <button class="action-btn" onclick="speakFullEn()" style="background:var(--secondary);">🔊 朗读全句</button>
+        <button class="action-btn" onclick="toggleTranslate()" style="background:var(--accent);">🔍 翻译</button>
+    </div>
+    <div id="translate-box" style="display:none; background:#fff3e0; padding:12px; border-radius:8px; cursor:pointer; margin-bottom:15px;" onclick="speakCurrentZh()">
+        <span id="hint-text"></span> (点击发音)
+    </div>
+    <div id="main-content"></div>
+</div>
+
+<script>
+const storyGroups = [
+    { name: "第一节：启航", data: [
+        { f: "Three of us afloat in the meadow by the swing", z: "我们三个漂泊在秋千旁的草地上", w: [{e:"Three of us",c:"我们三个"},{e:"afloat",c:"漂泊"},{e:"meadow",c:"草地"},{e:"swing",c:"秋千"}]},
+        { f: "Three of us aboard in the basket on the lea", z: "我们三个登船在林间空地的篮子里", w: [{e:"aboard",c:"在船上"},{e:"basket",c:"篮子"},{e:"lea",c:"林间空地"}]},
+        { f: "Winds are in the air they are blowing in the spring", z: "风拂过天际，春日里轻轻摇曳", w: [{e:"Winds",c:"风"},{e:"air",c:"空气/天际"},{e:"blowing",c:"吹拂"},{e:"spring",c:"春天"}]},
+        { f: "And waves are on the meadow like the waves there are at sea", z: "草地上的“波浪”起伏，恰似海上的波涛翻涌", w: [{e:"waves",c:"波浪"},{e:"meadow",c:"草地"},{e:"at sea",c:"在海上"}]}
+    ]},
+    { name: "第二节：探险目的地", data: [
+        { f: "Where shall we adventure today that we are afloat", z: "今日我们漂泊四方，该向何处探险？", w: [{e:"adventure",c:"探险"},{e:"today",c:"今天"},{e:"afloat",c:"漂泊"}]},
+        { f: "Wary of the weather and steering by a star", z: "留意着天气变幻，跟着星辰指引航向", w: [{e:"Wary",c:"留意的"},{e:"weather",c:"天气"},{e:"steering",c:"驾驶/导航"},{e:"star",c:"星辰"}]},
+        { f: "Shall it be to Africa a-steering of the boat", z: "是驶向非洲大陆，驾着小船破浪前行？", w: [{e:"Africa",c:"非洲"},{e:"boat",c:"小船"}]},
+        { f: "To Providence or Babylon or off to Malabar", z: "或是去往普罗维登斯、巴比伦，亦或是远赴马拉巴尔", w: [{e:"Providence",c:"普罗维登斯"},{e:"Babylon",c:"巴比伦"},{e:"Malabar",c:"马拉巴尔"}]}
+    ]},
+    { name: "第三节：躲避牛群", data: [
+        { f: "Hi but here is a squadron a-rowing on the sea", z: "嗨！可看那海上驶来一队舰队", w: [{e:"squadron",c:"中队/舰队"},{e:"rowing",c:"划船"},{e:"sea",c:"大海"}]},
+        { f: "Cattle on the meadow a-charging with a roar", z: "原是草地上的牛群，呼啸着狂奔而来", w: [{e:"Cattle",c:"牛群"},{e:"charging",c:"冲锋"},{e:"roar",c:"咆哮"}]},
+        { f: "Quick and we will escape them they are as mad as they can be", z: "快！我们得躲开它们，它们已然狂躁不已", w: [{e:"Quick",c:"快"},{e:"escape",c:"逃脱"},{e:"mad",c:"疯狂的"}]},
+        { f: "The wicket is the harbour and the garden is the shore", z: "那小门便是港湾，花园就是岸边的彼岸", w: [{e:"wicket",c:"小门"},{e:"harbour",c:"港口"},{e:"garden",c:"花园"},{e:"shore",c:"岸"}]}
+    ]}
+];
+
+let curGrp = 0, curLvl = 0, diff = 1, isP2 = false;
+let selEn = null, selZh = null, timer = null, totalT = 0, leftT = 0, startTime = 0;
+let currentAudio = null;
+const synth = window.speechSynthesis;
+
+async function speak(text, lang) {
+    if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+    if (synth.speaking) { synth.cancel(); }
+    const voice = (lang === 'en-US') ? 'en-US-GuyNeural' : 'zh-CN-XiaoxiaoNeural';
+    const url = `https://api.p6p.net/api/tts?text=${encodeURIComponent(text)}&voice=${voice}`;
+    try {
+        currentAudio = new Audio(url);
+        const playPromise = currentAudio.play();
+        if (playPromise !== undefined) { await playPromise; }
+    } catch (e) {
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = lang;
+        utterance.rate = 0.95;
+        synth.speak(utterance);
+    }
+}
+
+function initMenu() {
+    const box = document.getElementById('group-btns');
+    box.innerHTML = '';
+    storyGroups.forEach((g, i) => {
+        const b = document.createElement('button');
+        b.className = 'card'; b.style.width = "100%"; b.style.marginBottom = "10px";
+        b.innerText = g.name;
+        b.style.background = (curGrp === i) ? "#e3f2fd" : "#fff";
+        b.onclick = () => { curGrp = i; showPreview(); };
+        box.appendChild(b);
+    });
+    selectDiff(diff);
+}
+
+function selectDiff(d) {
+    diff = d;
+    document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('d'+d).classList.add('active');
+    updateRankDisp();
+}
+
+function updateRankDisp() {
+    const rBox = document.getElementById('rank-display');
+    if(diff === 1) { rBox.innerHTML = "💡 悠闲难度不记录排行榜。"; return; }
+    const key = `rank_g${curGrp}_d${diff}`;
+    const scores = JSON.parse(localStorage.getItem(key) || "[]");
+    let h = `<strong>排行榜 (${storyGroups[curGrp].name})</strong><br>`;
+    if(scores.length === 0) h += "暂无记录";
+    else scores.forEach((s, i) => h += `${i+1}. ${s}s `);
+    rBox.innerHTML = h;
+}
+
+function showPreview() {
+    switchScreen('preview-screen');
+    document.getElementById('preview-title').innerText = storyGroups[curGrp].name;
+    const list = document.getElementById('preview-list');
+    list.innerHTML = '';
+    storyGroups[curGrp].data.forEach(item => {
+        const d = document.createElement('div');
+        d.className = 'preview-item';
+        const enP = document.createElement('p'); enP.className='preview-en'; enP.innerText=item.f;
+        enP.onclick = (e) => { e.stopPropagation(); speak(item.f, 'en-US'); };
+        const zhP = document.createElement('p'); zhP.className='preview-zh'; zhP.innerText=item.z;
+        zhP.onclick = (e) => { e.stopPropagation(); speak(item.z, 'zh-CN'); };
+        d.append(enP, zhP);
+        list.appendChild(d);
+    });
+}
+
+function startChallenge() {
+    curLvl = 0; isP2 = false;
+    switchScreen('game-screen');
+    startTime = Date.now();
+    loadLevel();
+}
+
+function loadLevel() {
+    const data = storyGroups[curGrp].data[curLvl];
+    const box = document.getElementById('main-content');
+    document.getElementById('info-display').innerText = `${curLvl + 1} / ${storyGroups[curGrp].data.length}`;
+    document.getElementById('hint-text').innerText = data.z;
+    document.getElementById('translate-box').style.display = 'none';
+    box.innerHTML = ""; selEn = null; selZh = null;
+    if (!isP2) { renderMatch(data, box); document.getElementById('mode-display').innerText = "第一阶段：词组匹配"; }
+    else { renderSentence(data, box); document.getElementById('mode-display').innerText = "第二阶段：诗句还原"; }
+    if(diff > 1) { document.getElementById('timer-container').style.display = 'block'; resetTimer(data.f); }
+    else { document.getElementById('timer-container').style.display = 'none'; }
+}
+
+function resetTimer(sentence) {
+    clearInterval(timer);
+    const wc = sentence.split(' ').length;
+    const config = { 2: [8, 5], 3: [6, 3.5], 4: [4, 2.5] };
+    const [base, add] = config[diff];
+    totalT = base + (wc * add);
+    leftT = totalT;
+    timer = setInterval(() => {
+        leftT -= 0.1;
+        document.getElementById('timer-bar').style.width = Math.max(0, (leftT/totalT)*100) + "%";
+        if (leftT <= 0) { clearInterval(timer); alert("航行触礁！重试本句。"); isP2 = false; loadLevel(); }
+    }, 100);
+}
+
+function renderMatch(data, box) {
+    const grid = document.createElement('div'); grid.className = 'match-grid';
+    const left = document.createElement('div'), right = document.createElement('div');
+    const ens = [...data.w].sort(() => Math.random() - 0.5);
+    const zhs = [...data.w].sort(() => Math.random() - 0.5);
+    ens.forEach(i => left.appendChild(createMCard(i.e, 'en', i.e)));
+    zhs.forEach(i => right.appendChild(createMCard(i.c, 'zh', i.e)));
+    grid.append(left, right); box.appendChild(grid);
+}
+
+function createMCard(txt, lang, mid) {
+    const d = document.createElement('div');
+    d.className = 'card'; d.style.display = 'block'; d.innerText = txt;
+    d.onclick = () => {
+        speak(txt, lang === 'en' ? 'en-US' : 'zh-CN');
+        if (lang === 'en') { if(selEn) selEn.classList.remove('selected'); selEn = d; }
+        else { if(selZh) selZh.classList.remove('selected'); selZh = d; }
+        d.classList.add('selected');
+        if (selEn && selZh) {
+            if (selEn.dataset.mid === selZh.dataset.mid) {
+                const e=selEn, z=selZh;
+                setTimeout(() => { e.classList.add('hidden'); z.classList.add('hidden'); 
+                if (document.querySelectorAll('.match-grid .card:not(.hidden)').length === 0) { isP2 = true; loadLevel(); }
+                }, 200);
+            }
+            const e=selEn, z=selZh; setTimeout(()=> { e.classList.remove('selected'); z.classList.remove('selected'); }, 400);
+            selEn = null; selZh = null;
+        }
+    };
+    d.dataset.mid = mid;
+    return d;
+}
+
+function renderSentence(data, box) {
+    let sIdx = 0;
+    const words = data.f.split(' ');
+    const drop = document.createElement('div'); drop.className = 'drop-zone';
+    const pool = document.createElement('div'); pool.className = 'word-pool';
+    const shuffled = [...words].sort(() => Math.random() - 0.5);
+    shuffled.forEach(w => {
+        const c = document.createElement('div'); c.className = 'card'; c.innerText = w;
+        c.onclick = () => {
+            if (w === words[sIdx]) {
+                speak(w, 'en-US'); c.classList.add('hidden');
+                const p = document.createElement('div'); p.className = 'card correct-placed'; p.innerText = w;
+                drop.appendChild(p); sIdx++;
+                if (sIdx === words.length) { clearInterval(timer); setTimeout(() => nextLevel(false), 800); }
+            } else { c.style.borderColor = 'red'; setTimeout(()=>c.style.borderColor='#ddd', 500); }
+        };
+        pool.appendChild(c);
+    });
+    box.append(drop, pool);
+}
+
+function speakFullEn() { speak(storyGroups[curGrp].data[curLvl].f, 'en-US'); }
+function toggleTranslate() { const box = document.getElementById('translate-box'); box.style.display = (box.style.display === 'none') ? 'block' : 'none'; }
+function speakCurrentZh() { speak(storyGroups[curGrp].data[curLvl].z, 'zh-CN'); }
+function nextLevel(manual) {
+    if (manual) { curLvl++; isP2 = false; } else if (isP2) { curLvl++; isP2 = false; }
+    if (curLvl >= storyGroups[curGrp].data.length) {
+        if(diff > 1) { const finalTime = ((Date.now() - startTime)/1000).toFixed(1); saveScore(finalTime); alert(`抵达终点！总用时：${finalTime}秒`); }
+        else alert("本节完成！"); goHome();
+    } else loadLevel();
+}
+function saveScore(t) { const key = `rank_g${curGrp}_d${diff}`; let s = JSON.parse(localStorage.getItem(key) || "[]"); s.push(parseFloat(t)); s.sort((a,b) => a - b); localStorage.setItem(key, JSON.stringify(s.slice(0, 5))); }
+function prevLevel() { if (curLvl > 0) { curLvl--; isP2 = false; loadLevel(); } }
+function switchScreen(id) { document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); document.getElementById(id).classList.add('active'); }
+function goHome() { clearInterval(timer); switchScreen('menu-screen'); initMenu(); }
+
+initMenu();
+</script>
+</body>
+</html>
